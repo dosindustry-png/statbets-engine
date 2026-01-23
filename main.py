@@ -29,6 +29,7 @@ SPORT_KEYS = {
     "tennis_wta_aus_open_singles",
 ],
     "UFC": ["mma_mixed_martial_arts_ufc"],
+}
 
 REGIONS = "au,us,eu"
 ODDS_FORMAT = "decimal"
