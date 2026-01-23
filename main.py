@@ -9,7 +9,6 @@ app = FastAPI()
 
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 
-# Each sport maps to a LIST of Odds API sport keys (Tennis uses two feeds)
 SPORT_KEYS = {
     "NBA": ["basketball_nba"],
     "NHL": ["icehockey_nhl"],
@@ -17,7 +16,7 @@ SPORT_KEYS = {
     "NRL": ["rugbyleague_nrl"],
     "MLB": ["baseball_mlb"],
     "EPL": ["soccer_epl"],
-    "TENNIS": ["tennis_atp", "tennis_wta"],
+    "TENNIS": ["tennis_atp_singles", "tennis_wta_singles"],
     "UFC": ["mma_mixed_martial_arts"],
 }
 
