@@ -16,7 +16,7 @@ SPORT_KEYS = {
     "NRL": ["rugbyleague_nrl"],
     "MLB": ["baseball_mlb"],
     "EPL": ["soccer_epl"],
-    "TENNIS": ["tennis_atp_singles", "tennis_wta_singles"],
+    "TENNIS": ["tennis_atp_aus_open_singles", "tennis_wta_aus_open_singles"],
     "UFC": ["mma_mixed_martial_arts"],
 }
 
