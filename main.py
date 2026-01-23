@@ -8,7 +8,13 @@ app = FastAPI()
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 
 SPORT_KEYS = {
+    SPORT_KEYS = {
     "NBA": "basketball_nba",
+    "NHL": "icehockey_nhl",
+    "NFL": "americanfootball_nfl",
+    "NRL": "rugbyleague_nrl",
+    "MLB": "baseball_mlb",
+    "EPL": "soccer_epl",
 }
 
 REGIONS = "au,us,eu"
