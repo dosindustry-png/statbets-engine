@@ -34,7 +34,7 @@ def daily_picks(payload: dict | None = None):
 
     payload = payload or {}
     sport = payload.get("sport", "NBA")
-    markets = payload.get("markets", ["h2h"])  # start with moneyline only
+    markets = payload.get("markets", ["h2h", "spreads", "totals"])
 
     if sport not in SPORT_KEYS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport '{sport}' (try NBA)")
