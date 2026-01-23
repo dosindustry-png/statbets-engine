@@ -4,8 +4,16 @@ from typing import Optional, Dict, Any, List
 
 import requests
 from fastapi import FastAPI, HTTPException
+from datetime import datetime, timezone
+
+# Simple in-memory cache (resets if Render restarts)
+CACHE = {
+    "date": None,
+    "data": None,
+}
 
 app = FastAPI()
+
 
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 
