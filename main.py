@@ -10,6 +10,9 @@ import requests
 from fastapi import FastAPI, HTTPException, Query
 
 app = FastAPI()
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
 
 # ======================
 # ENV / CONFIG
