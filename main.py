@@ -396,3 +396,40 @@ def picks_today():
     # If you already have SQLite logic in your code, this should query that.
     # If not, we need to add it.
     raise HTTPException(status_code=501, detail="picks storage not implemented yet")
+from datetime import datetime
+import pytz
+from fastapi import HTTPException
+
+@app.get("/picks/today")
+def get_today_picks():
+    # Sydney timezone
+    tz = pytz.timezone("Australia/Sydney")
+    today = datetime.now(tz).date().isoformat()
+
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT *
+        FROM picks
+        WHERE pick_date = ?
+        ORDER BY sport, rank ASC
+        """,
+        (today,)
+    )
+
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        return {
+            "date": today,
+            "picks": [],
+            "message": "No picks found for today"
+        }
+
+    return {
+        "date": today,
+        "picks": [dict(row) for row in rows]
+    }
