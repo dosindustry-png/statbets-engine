@@ -1,0 +1,15 @@
+name: Daily Picks Generate
+
+on:
+  schedule:
+    # 5am Sydney (AEDT = UTC+11)
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call StatBets generate endpoint
+        run: |
+          curl -sS -X POST "https://statbets-engine.onrender.com/admin/generate?key=${{ secrets.ADMIN_KEY }}"
