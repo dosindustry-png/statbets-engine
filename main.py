@@ -373,3 +373,26 @@ def pick_detail(pick_id: str):
         raise HTTPException(status_code=404, detail="Pick not found")
 
     return json.loads(row["payload_json"])
+from fastapi.middleware.cors import CORSMiddleware
+
+# Allow your website to call the API (change domains later if needed)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # quick start; tighten later
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Returns the sports list
+@app.get("/sports")
+def sports():
+    return [{"id": k, "name": k} for k in SPORT_KEYS.keys()]
+
+# Returns today's generated picks (this assumes you are storing picks somewhere)
+# If you are NOT storing picks yet, tell me and I’ll provide the exact storage block.
+@app.get("/picks/today")
+def picks_today():
+    # If you already have SQLite logic in your code, this should query that.
+    # If not, we need to add it.
+    raise HTTPException(status_code=501, detail="picks storage not implemented yet")
