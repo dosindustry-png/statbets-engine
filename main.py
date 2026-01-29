@@ -3,13 +3,31 @@ import json
 import uuid
 import sqlite3
 import statistics
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, timedelta, date
 from typing import Optional, Dict, Any, List
 
 import requests
+from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+# ======================
+# CORS (allow your static site to call the API)
+# Tighten allow_origins later to ["https://www.statbets.com.au", "https://statbets.com.au"]
+# ======================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ======================
+# HEALTH
+# ======================
 @app.get("/healthz")
 def healthz():
     return {"status": "ok"}
@@ -21,10 +39,12 @@ def healthz():
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")  # set this in Render env vars
 
-REGIONS = "au"                  # AU ONLY
-ODDS_FORMAT = "decimal"
+REGIONS = "au"                 # AU ONLY
+ODDS_FORMAT = "decimal"        # Decimal odds (correct for AU)
 MAX_PICKS_PER_SPORT = 5
-TOP_TIP_THRESHOLD = 0.85        # 85%
+TOP_TIP_THRESHOLD = 0.85       # 85%
+
+SYD_TZ = ZoneInfo("Australia/Sydney")
 
 # Odds API sport keys
 SPORT_KEYS = {
@@ -44,7 +64,6 @@ SPORT_KEYS = {
 
 DB_PATH = os.getenv("DB_PATH", "statbets.sqlite3")
 
-
 # ======================
 # DB HELPERS
 # ======================
@@ -57,12 +76,14 @@ def db() -> sqlite3.Connection:
 def init_db() -> None:
     conn = db()
     cur = conn.cursor()
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS daily_runs (
             run_date TEXT PRIMARY KEY,
             created_at TEXT NOT NULL
         )
     """)
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS picks (
             id TEXT PRIMARY KEY,
@@ -78,6 +99,7 @@ def init_db() -> None:
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_picks_date_sport ON picks(pick_date, sport)")
+
     conn.commit()
     conn.close()
 
@@ -85,13 +107,37 @@ def init_db() -> None:
 def _startup():
     init_db()
 
-
 # ======================
 # CORE HELPERS
 # ======================
 
-def utc_today() -> date:
-    return datetime.now(timezone.utc).date()
+def syd_today() -> date:
+    return datetime.now(SYD_TZ).date()
+
+def iso_utc_to_dt(s: str) -> Optional[datetime]:
+    # Odds API returns ISO like "2026-01-27T09:00:00Z"
+    if not s or not isinstance(s, str):
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+def in_next_24h_sydney(commence_iso_utc: Optional[str]) -> bool:
+    """
+    Keep events that START within the next 24 hours based on Sydney time.
+    """
+    dt_utc = iso_utc_to_dt(commence_iso_utc)
+    if not dt_utc:
+        return False
+
+    now_syd = datetime.now(SYD_TZ)
+    cutoff_syd = now_syd + timedelta(hours=24)
+
+    now_utc = now_syd.astimezone(timezone.utc)
+    cutoff_utc = cutoff_syd.astimezone(timezone.utc)
+
+    return now_utc <= dt_utc < cutoff_utc
 
 def avg_decimal_odds(prices: List[float]) -> Optional[float]:
     valid = [p for p in prices if isinstance(p, (int, float)) and p > 1.0]
@@ -109,13 +155,13 @@ def require_admin(key: str):
         raise HTTPException(status_code=401, detail="Invalid admin key")
 
 def already_ran_today() -> bool:
+    run_date = syd_today().isoformat()
     conn = db()
     cur = conn.cursor()
-    cur.execute("SELECT 1 FROM daily_runs WHERE run_date = ?", (utc_today().isoformat(),))
+    cur.execute("SELECT 1 FROM daily_runs WHERE run_date = ?", (run_date,))
     row = cur.fetchone()
     conn.close()
     return row is not None
-
 
 # ======================
 # ODDS FETCH + PICK BUILD
@@ -131,13 +177,11 @@ def fetch_events_for_sport(sport_key: str, markets: List[str]) -> List[Dict[str,
     }
     r = requests.get(url, params=params, timeout=20)
     if r.status_code != 200:
-        # Don’t crash the whole run; just return empty for this sport key.
         return []
     data = r.json()
     return data if isinstance(data, list) else []
 
 def build_picks_for_sport(sport: str) -> List[Dict[str, Any]]:
-    # For now we generate ML picks (h2h) only, to keep it consistent.
     markets = ["h2h"]
     all_events: List[Dict[str, Any]] = []
 
@@ -153,6 +197,10 @@ def build_picks_for_sport(sport: str) -> List[Dict[str, Any]]:
         bookmakers = ev.get("bookmakers", [])
 
         if not home or not away:
+            continue
+
+        # Only games starting within next 24 hours (Sydney time window)
+        if not in_next_24h_sydney(commence):
             continue
 
         # Collect home-team h2h prices from AU books
@@ -173,8 +221,8 @@ def build_picks_for_sport(sport: str) -> List[Dict[str, Any]]:
 
         imp = implied_prob(avg_odds)
 
-        # Placeholder “model probability” until NBA context engine is added.
-        # For now, it equals implied probability (market baseline).
+        # Placeholder “model probability” until analytics engine is added.
+        # Currently equals market implied probability.
         model_p = imp
 
         confidence_level = (
@@ -186,13 +234,13 @@ def build_picks_for_sport(sport: str) -> List[Dict[str, Any]]:
         analysis = [
             "AU market consensus (averaged AU bookmakers)",
             f"Books used: {len(prices)}",
-            "NBA deep context engine (injuries/rest/travel) will be added next"
+            "Advanced analytics (injuries/rest/travel/roster) will be added next"
         ]
 
         picks.append({
             "id": str(uuid.uuid4()),
             "sport": sport,
-            "league": sport,  # keep simple; your UI expects a league-ish label
+            "league": sport,
             "home_team": home,
             "away_team": away,
             "game_time": commence,
@@ -204,8 +252,8 @@ def build_picks_for_sport(sport: str) -> List[Dict[str, Any]]:
             "confidence_score": round(model_p * 100, 2),
             "confidence_level": confidence_level,
             "top_tip": bool(model_p >= TOP_TIP_THRESHOLD),
-            "rank": None,  # filled after sorting
-            # fields your UI references (safe defaults)
+            "rank": None,
+            # UI-safe defaults
             "edge": 0.0,
             "simulation_results": None,
             "game_status": None,
@@ -222,15 +270,15 @@ def build_picks_for_sport(sport: str) -> List[Dict[str, Any]]:
     picks = picks[:MAX_PICKS_PER_SPORT]
     for i, p in enumerate(picks, start=1):
         p["rank"] = i
-    return picks
 
+    return picks
 
 # ======================
 # STORAGE
 # ======================
 
 def store_daily_run(picks_by_sport: Dict[str, List[Dict[str, Any]]]) -> None:
-    run_date = utc_today().isoformat()
+    run_date = syd_today().isoformat()
     now = datetime.now(timezone.utc).isoformat()
 
     conn = db()
@@ -269,7 +317,6 @@ def store_daily_run(picks_by_sport: Dict[str, List[Dict[str, Any]]]) -> None:
     conn.commit()
     conn.close()
 
-
 # ======================
 # ROUTES
 # ======================
@@ -280,11 +327,8 @@ def root():
 
 @app.get("/sports")
 def sports():
-    # Your frontend expects {id, name}
-    out = []
-    for name in SPORT_KEYS.keys():
-        out.append({"id": name, "name": name})
-    return out
+    # Frontend expects {id, name}
+    return [{"id": name, "name": name} for name in SPORT_KEYS.keys()]
 
 @app.post("/admin/generate")
 def admin_generate(key: str = Query(...)):
@@ -292,9 +336,9 @@ def admin_generate(key: str = Query(...)):
         raise HTTPException(status_code=500, detail="Missing ODDS_API_KEY")
     require_admin(key)
 
-    # enforce once/day
+    # enforce once/day (Sydney day)
     if already_ran_today():
-        return {"status": "ok", "message": "Already generated today", "date": utc_today().isoformat()}
+        return {"status": "ok", "message": "Already generated today", "date": syd_today().isoformat()}
 
     picks_by_sport: Dict[str, List[Dict[str, Any]]] = {}
     for sport in SPORT_KEYS.keys():
@@ -302,11 +346,12 @@ def admin_generate(key: str = Query(...)):
 
     store_daily_run(picks_by_sport)
 
-    return {"status": "ok", "message": "Generated daily picks", "date": utc_today().isoformat()}
+    return {"status": "ok", "message": "Generated daily picks", "date": syd_today().isoformat()}
 
 @app.get("/picks/today")
 def picks_today():
-    run_date = utc_today().isoformat()
+    # Sydney day
+    run_date = syd_today().isoformat()
 
     conn = db()
     cur = conn.cursor()
@@ -373,63 +418,3 @@ def pick_detail(pick_id: str):
         raise HTTPException(status_code=404, detail="Pick not found")
 
     return json.loads(row["payload_json"])
-from fastapi.middleware.cors import CORSMiddleware
-
-# Allow your website to call the API (change domains later if needed)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # quick start; tighten later
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Returns the sports list
-@app.get("/sports")
-def sports():
-    return [{"id": k, "name": k} for k in SPORT_KEYS.keys()]
-
-# Returns today's generated picks (this assumes you are storing picks somewhere)
-# If you are NOT storing picks yet, tell me and I’ll provide the exact storage block.
-@app.get("/picks/today")
-def picks_today():
-    # If you already have SQLite logic in your code, this should query that.
-    # If not, we need to add it.
-    raise HTTPException(status_code=501, detail="picks storage not implemented yet")
-from datetime import datetime
-import pytz
-from fastapi import HTTPException
-
-@app.get("/picks/today")
-def get_today_picks():
-    # Sydney timezone
-    tz = pytz.timezone("Australia/Sydney")
-    today = datetime.now(tz).date().isoformat()
-
-    conn = db()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        SELECT *
-        FROM picks
-        WHERE pick_date = ?
-        ORDER BY sport, rank ASC
-        """,
-        (today,)
-    )
-
-    rows = cur.fetchall()
-    conn.close()
-
-    if not rows:
-        return {
-            "date": today,
-            "picks": [],
-            "message": "No picks found for today"
-        }
-
-    return {
-        "date": today,
-        "picks": [dict(row) for row in rows]
-    }
